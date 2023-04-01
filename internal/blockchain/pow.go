@@ -27,16 +27,21 @@ func NewProofOfWork(b *Block) *ProofOfWork {
 	return p
 }
 
+// IntToHex converts an integer to a hexadecimal byte array.
+func IntToHex(n int64) []byte {
+	return []byte(fmt.Sprintf("%x", n))
+}
+
 // prepareData returns the data to be hashed. The data is the concatenation of the fields of the
 // block and the nonce.
 func (p *ProofOfWork) prepareData(nonce int) []byte {
 	data := bytes.Join(
 		[][]byte{
 			p.block.PrevBlockHash,
-			p.block.Data,
-			[]byte(fmt.Sprintf("%x", p.block.Timestamp)),
-			[]byte(fmt.Sprintf("%x", targetBits)),
-			[]byte(fmt.Sprintf("%x", nonce)),
+			p.block.HashTransactions(),
+			IntToHex(p.block.Timestamp),
+			IntToHex(int64(targetBits)),
+			IntToHex(int64(nonce)),
 		},
 		[]byte{},
 	)

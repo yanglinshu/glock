@@ -22,7 +22,12 @@ func (i *BlockchainIterator) Next() (*Block, error) {
 	err := i.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
 		encodedBlock := b.Get(i.currentHash)
-		block = DeserializeBlock(encodedBlock)
+
+		var err error = nil
+		block, err = DeserializeBlock(encodedBlock)
+		if err != nil {
+			return err
+		}
 
 		return nil
 	})
