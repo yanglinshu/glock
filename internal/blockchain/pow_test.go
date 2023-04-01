@@ -31,7 +31,7 @@ func TestRun(t *testing.T) {
 	p := NewProofOfWork(NewBlock("Genesis Block", []byte{}))
 	_, hash := p.Run()
 
-	if bytes.Compare(hash, bytes.Repeat([]byte{0}, targetBits)) <= 0 {
+	if !p.Validate() {
 		t.Errorf("Expected %s, got %s", strings.Repeat("0", targetBits), hash)
 	} else {
 		t.Log("Hash starts with targetBits")

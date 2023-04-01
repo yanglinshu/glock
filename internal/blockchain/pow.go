@@ -13,8 +13,8 @@ const targetBits = 24
 
 // ProofOfWork represents a proof-of-work.
 type ProofOfWork struct {
-	block  *Block
-	target *big.Int
+	block  *Block   // block is the block to be mined
+	target *big.Int // target is the upper bound of the hash of a block
 }
 
 // NewProofOfWork creates a new ProofOfWork with the upper bound of the hash of a block.
@@ -53,6 +53,7 @@ func (p *ProofOfWork) Run() (int, []byte) {
 	var hash [32]byte
 	nonce := 0 // nonce is the number of times the hash of the block is calculated
 
+	// Calculate the hash of the block until the hash is less than the upper bound.
 	for nonce < maxNonce {
 		data := p.prepareData(nonce)
 		hash = sha256.Sum256(data)
@@ -67,4 +68,17 @@ func (p *ProofOfWork) Run() (int, []byte) {
 
 	return nonce, hash[:]
 
+}
+
+// Validate validates a proof-of-work.
+func (p *ProofOfWork) Validate() bool {
+	var hashInt big.Int
+
+	data := p.prepareData(p.block.Nonce)
+	hash := sha256.Sum256(data)
+	hashInt.SetBytes(hash[:])
+
+	isValid := hashInt.Cmp(p.target) == -1
+
+	return isValid
 }
