@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/boltdb/bolt"
+	"github.com/yanglinshu/glock/internal/block"
 	"github.com/yanglinshu/glock/internal/errors"
 	"github.com/yanglinshu/glock/internal/transaction"
 )
@@ -40,7 +41,7 @@ func dbExists() bool {
 // a genesis block and adds it to the database.
 func NewBlockchain() (*Blockchain, error) {
 	if !dbExists() {
-		return nil, errors.ErrorDBDoesNotExist
+		return nil, errors.ErrDBDoesNotExist
 	}
 
 	var tip []byte
@@ -68,13 +69,17 @@ func NewBlockchain() (*Blockchain, error) {
 // to the database.
 func CreateBlockchain(address string) (*Blockchain, error) {
 	if dbExists() {
-		return nil, errors.ErrorDBExists
+		return nil, errors.ErrDBExists
 	}
 
 	var tip []byte
 
-	cbtx := transaction.NewCoinbaseTX(address, genesisCoinbaseData)
-	genesis := NewGenesisBlock(cbtx)
+	cbtx, err := transaction.NewCoinbaseTX(address, genesisCoinbaseData)
+	if err != nil {
+		return nil, err
+	}
+
+	genesis := block.NewGenesisBlock(cbtx)
 
 	// Open the database
 	db, err := bolt.Open(dbFile, 0600, nil)
@@ -118,17 +123,67 @@ func CreateBlockchain(address string) (*Blockchain, error) {
 	return &bc, nil
 }
 
+// FindUTXO finds and returns all unspent transaction outputs.
+func (bc *Blockchain) FindUTXO() (map[string]transaction.TXOutputs, error) {
+	UTXOs := make(map[string]transaction.TXOutputs)
+	spentTXO := make(map[string][]int)
+	bci := bc.Iterator()
+
+	// Iterate over the blockchain
+	for {
+		block, err := bci.Next()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+
+		Outputs:
+			for outIdx, out := range tx.Vout {
+				// If the output has already been spent, skip it
+				if spentTXO[txID] != nil {
+					for _, spentOut := range spentTXO[txID] {
+						if spentOut == outIdx {
+							continue Outputs
+						}
+					}
+				}
+
+				outs := UTXOs[txID]
+				outs.Outputs = append(outs.Outputs, out)
+				UTXOs[txID] = outs
+			}
+
+			// If the transaction is not a coinbase transaction, add the inputs to the spentTXOs map
+			if !tx.IsCoinbase() {
+				for _, in := range tx.Vin {
+					inTxID := hex.EncodeToString(in.Txid)
+					spentTXO[inTxID] = append(spentTXO[inTxID], in.Vout)
+				}
+			}
+		}
+
+		// If the genesis block has been reached, break out of the loop
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return UTXOs, nil
+}
+
 // MineBlock mines a new block with the provided transactions. It adds the block to the blockchain
 // and updates the database. Verify the transactions happens before the block is mined.
-func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) error {
+func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) (*block.Block, error) {
 	var lastHash []byte
 
 	// Verify the transactions
 	for _, tx := range transactions {
 		if ok, err := bc.VerifyTransaction(tx); err != nil {
-			return err
+			return nil, err
 		} else if !ok {
-			return errors.ErrorInvalidTransaction
+			return nil, errors.ErrInvalidTransaction
 		}
 	}
 
@@ -140,10 +195,10 @@ func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	newBlock := NewBlock(transactions, lastHash)
+	newBlock := block.NewBlock(transactions, lastHash)
 
 	// Write the new block to the database
 	err = bc.db.Update(func(tx *bolt.Tx) error {
@@ -167,116 +222,12 @@ func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	fmt.Printf("%x\n", newBlock.Hash)
 
-	return nil
-}
-
-// FindUTXO finds and returns all unspent transaction outputs.
-func (bc *Blockchain) FindUTXO(pubKeyHash []byte) ([]transaction.TXOutput, error) {
-	var UTXOs []transaction.TXOutput
-	unspentTransactions, err := bc.FindUnspentTransactions(pubKeyHash)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, tx := range unspentTransactions {
-		for _, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				UTXOs = append(UTXOs, out)
-			}
-		}
-	}
-
-	return UTXOs, nil
-}
-
-// FindUnspentTransactions finds and returns all unspent transactions.
-func (bc *Blockchain) FindUnspentTransactions(publicKeyHash []byte) ([]transaction.Transaction, error) {
-	var unspentTXs []transaction.Transaction
-	spentTXOs := make(map[string][]int)
-	bci := bc.Iterator()
-
-	// Iterate over the blockchain
-	for {
-		block, err := bci.Next()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, tx := range block.Transactions {
-			txID := hex.EncodeToString(tx.ID)
-
-		Outputs:
-			for outIdx, out := range tx.Vout {
-				// If the output has already been spent, skip it
-				if spentTXOs[txID] != nil {
-					for _, spentOut := range spentTXOs[txID] {
-						if spentOut == outIdx {
-							continue Outputs
-						}
-					}
-				}
-
-				// Save the unspent transaction
-				if out.IsLockedWithKey(publicKeyHash) {
-					unspentTXs = append(unspentTXs, *tx)
-				}
-			}
-
-			// If the transaction is not a coinbase transaction, add the inputs to the spentTXOs map
-			if !tx.IsCoinbase() {
-				for _, in := range tx.Vin {
-					if ok, err := in.UsesKey(publicKeyHash); err != nil {
-						return nil, err
-					} else if ok {
-						inTxID := hex.EncodeToString(in.Txid)
-						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
-					}
-				}
-			}
-		}
-
-		if len(block.PrevBlockHash) == 0 {
-			break
-		}
-	}
-
-	return unspentTXs, nil
-}
-
-// FindSpendableOutputs finds and returns unspent outputs to reference in inputs.
-func (bc *Blockchain) FindSpendableOutputs(publicKeyHash []byte, amount int) (int, map[string][]int, error) {
-	unspentOutputs := make(map[string][]int)
-	unspentTXs, err := bc.FindUnspentTransactions(publicKeyHash)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	accumulated := 0
-
-	// Iterate over the unspent transactions
-Work:
-	for _, tx := range unspentTXs {
-		txID := hex.EncodeToString(tx.ID)
-
-		for outIdx, out := range tx.Vout {
-			if out.IsLockedWithKey(publicKeyHash) && accumulated < amount {
-				accumulated += out.Value
-				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
-
-				// Break if the accumulated amount is greater than the amount to be spent
-				if accumulated >= amount {
-					break Work
-				}
-			}
-		}
-	}
-
-	return accumulated, unspentOutputs, nil
+	return newBlock, nil
 }
 
 func (bc *Blockchain) FindTransaction(ID []byte) (transaction.Transaction, error) {
@@ -300,7 +251,7 @@ func (bc *Blockchain) FindTransaction(ID []byte) (transaction.Transaction, error
 		}
 	}
 
-	return transaction.Transaction{}, errors.ErrorTransactionNotFound
+	return transaction.Transaction{}, errors.ErrTransactionNotFound
 }
 
 // SignTransaction signs inputs of a Transaction.
@@ -323,6 +274,10 @@ func (bc *Blockchain) SignTransaction(tx *transaction.Transaction, privKey ecdsa
 
 // VerifyTransaction verifies transaction inputs.
 func (bc *Blockchain) VerifyTransaction(tx *transaction.Transaction) (bool, error) {
+	if tx.IsCoinbase() {
+		return true, nil
+	}
+
 	prevTXs := make(map[string]transaction.Transaction)
 
 	// Iterate over the transaction inputs
@@ -339,7 +294,7 @@ func (bc *Blockchain) VerifyTransaction(tx *transaction.Transaction) (bool, erro
 }
 
 // NewUTXOTransaction creates a new transaction. Signing is done here.
-func NewUTXOTransaction(from, to string, amount int, bc *Blockchain) (*transaction.Transaction, error) {
+func NewUTXOTransaction(from, to string, amount int, UTXOSet *UTXOSet) (*transaction.Transaction, error) {
 	var inputs []transaction.TXInput
 	var outputs []transaction.TXOutput
 
@@ -354,13 +309,13 @@ func NewUTXOTransaction(from, to string, amount int, bc *Blockchain) (*transacti
 		return nil, err
 	}
 
-	acc, validOutputs, err := bc.FindSpendableOutputs(pubKeyHash, amount)
+	acc, validOutputs, err := UTXOSet.FindSpendableOutputs(pubKeyHash, amount)
 	if err != nil {
 		return nil, err
 	}
 
 	if acc < amount {
-		return nil, errors.ErrorNotEnoughFunds
+		return nil, errors.ErrNotEnoughFunds
 	}
 
 	// Build a list of inputs
@@ -384,7 +339,7 @@ func NewUTXOTransaction(from, to string, amount int, bc *Blockchain) (*transacti
 
 	tx := transaction.Transaction{ID: nil, Vin: inputs, Vout: outputs}
 	tx.ID = tx.Hash()
-	bc.SignTransaction(&tx, wallet.PrivateKey)
+	UTXOSet.Blockchain.SignTransaction(&tx, wallet.PrivateKey)
 
 	return &tx, nil
 }

@@ -1,8 +1,7 @@
-package blockchain
+package block
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/gob"
 	"time"
 
@@ -54,15 +53,13 @@ func (b *Block) Serialize() ([]byte, error) {
 // of the transactions in the block.
 func (b *Block) HashTransactions() []byte {
 	var txHashes [][]byte
-	var txHash [32]byte
 
 	for _, tx := range b.Transactions {
 		txHashes = append(txHashes, tx.ID)
 	}
+	mTree := NewMerkleTree(txHashes)
 
-	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
-
-	return txHash[:]
+	return mTree.RootNode.Data
 }
 
 // DeserializeBlock deserializes a byte slice into a block using the Gob encoding.

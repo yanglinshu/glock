@@ -50,8 +50,18 @@ func newKeyPair() (ecdsa.PrivateKey, []byte, error) {
 // ValidateAddress check if address if valid
 func ValidateAddress(address string) bool {
 	pubKeyHash := Base58Decode([]byte(address))
+
+	if len(pubKeyHash)-addressChecksumLen < 0 {
+		return false
+	}
+
 	actualChecksum := pubKeyHash[len(pubKeyHash)-addressChecksumLen:]
 	version := pubKeyHash[0]
+
+	if len(pubKeyHash)-addressChecksumLen < 1 {
+		return false
+	}
+
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-addressChecksumLen]
 	targetChecksum := checksum(append([]byte{version}, pubKeyHash...))
 

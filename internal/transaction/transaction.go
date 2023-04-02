@@ -16,56 +16,6 @@ import (
 // subsidy is the amount of coins given to the miner as a reward for mining a block.
 const subsidy = 10
 
-// TXInput represents a transaction input. It contains the ID of the transaction that contains the
-// output, the index of the output in the transaction, and the signature of the input. The signature
-// is used to verify that the owner of the output is the one spending it.
-type TXInput struct {
-	Txid      []byte // Txid is the ID of the transaction that contains the output
-	Vout      int    // Vout is the index of the output in the transaction
-	Signature []byte // Signature is the signature of the input
-	PublicKey []byte // PublicKey is the public key of the owner of the output
-}
-
-// UsesKey checks whether the address is the owner of the output.
-func (in *TXInput) UsesKey(pubKeyHash []byte) (bool, error) {
-	lockingHash, err := HashPubKey(in.PublicKey)
-	if err != nil {
-		return false, err
-	}
-
-	return bytes.Equal(lockingHash, pubKeyHash), nil
-}
-
-// TXOutput represents a transaction output. It contains the value of the output and the public key
-// of the recipient. In glock, the public key will be a simple string, rather than a smart contract.
-// Note that the value of the output cannot be used partially. If the value is greater than the amount
-// needed, the remaining value will be returned to the sender as a new output.
-type TXOutput struct {
-	Value         int    // Value is the amount of coins in the output
-	PublicKeyHash []byte // PublicKeyHash is the hash of the public key of the recipient
-}
-
-// NewTXOutput creates and returns a TXOutput.
-func NewTXOutput(value int, address string) *TXOutput {
-	txo := &TXOutput{value, nil}
-	txo.Lock([]byte(address))
-
-	return txo
-}
-
-// Lock signs the output.
-func (out *TXOutput) Lock(address []byte) {
-	pubKeyHash := Base58Decode(address)
-
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-	out.PublicKeyHash = pubKeyHash
-}
-
-// IsLockedWithKey checks whether the address is the owner of the output.
-func (out *TXOutput) IsLockedWithKey(pubKeyHash []byte) bool {
-	return bytes.Equal(out.PublicKeyHash, pubKeyHash)
-}
-
 // Transaction is a struct that contains the ID, inputs and outputs of a transaction. The Id is a
 // unique identifier for the transaction. The inputs must be the outputs of previous transactions.
 // The outputs will be the new outputs of the transaction.
@@ -213,9 +163,15 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 // NewCoinbaseTX creates a new coinbase transaction. The transaction will have no inputs, and will
 // have an output that will be given to the miner. The value of the output will be the reward for
 // mining the block.
-func NewCoinbaseTX(to, data string) *Transaction {
+func NewCoinbaseTX(to, data string) (*Transaction, error) {
 	if data == "" {
-		data = fmt.Sprintf("Reward to '%s'", to)
+		randData := make([]byte, 20)
+		_, err := rand.Read(randData)
+		if err != nil {
+			return nil, err
+		}
+
+		data = fmt.Sprintf("%x", randData)
 	}
 
 	txin := TXInput{[]byte{}, -1, nil, []byte(data)}
@@ -224,7 +180,7 @@ func NewCoinbaseTX(to, data string) *Transaction {
 	tx := Transaction{nil, []TXInput{txin}, []TXOutput{*txout}}
 	tx.ID = tx.Hash()
 
-	return &tx
+	return &tx, nil
 }
 
 // IsCoinbase checks whether the transaction is a coinbase transaction.

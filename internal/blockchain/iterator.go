@@ -1,6 +1,9 @@
 package blockchain
 
-import "github.com/boltdb/bolt"
+import (
+	"github.com/boltdb/bolt"
+	"github.com/yanglinshu/glock/internal/block"
+)
 
 // BlockchainIterator is used to iterate over blockchain blocks
 type BlockchainIterator struct {
@@ -15,8 +18,8 @@ func (bc *Blockchain) Iterator() *BlockchainIterator {
 }
 
 // Next returns the next block starting from the tip
-func (i *BlockchainIterator) Next() (*Block, error) {
-	var block *Block
+func (i *BlockchainIterator) Next() (*block.Block, error) {
+	var bl *block.Block
 
 	// Read the block from the database
 	err := i.db.View(func(tx *bolt.Tx) error {
@@ -24,7 +27,7 @@ func (i *BlockchainIterator) Next() (*Block, error) {
 		encodedBlock := b.Get(i.currentHash)
 
 		var err error = nil
-		block, err = DeserializeBlock(encodedBlock)
+		bl, err = block.DeserializeBlock(encodedBlock)
 		if err != nil {
 			return err
 		}
@@ -35,7 +38,7 @@ func (i *BlockchainIterator) Next() (*Block, error) {
 		return nil, err
 	}
 
-	i.currentHash = block.PrevBlockHash
+	i.currentHash = bl.PrevBlockHash
 
-	return block, nil
+	return bl, nil
 }
