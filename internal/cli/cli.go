@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/yanglinshu/glock/internal/blockchain"
+	"github.com/yanglinshu/glock/internal/errors"
 	"github.com/yanglinshu/glock/internal/transaction"
 )
 
@@ -23,36 +24,61 @@ func (cli *CLI) printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  get -address ADDRESS - get the balance for an address")
 	fmt.Println("  create -address ADDRESS - create a blockchain and send genesis block reward to ADDRESS")
+	fmt.Println("  new - create a new wallet")
+	fmt.Println("  list - list all the addresses in the wallet file")
 	fmt.Println("  print - print all the blocks of the blockchain")
 	fmt.Println("  send -from FROM -to TO -amount AMOUNT - send AMOUNT of coins from FROM address to TO")
 }
 
 // createBlockchain creates a new blockchain
-func (cli *CLI) createBlockchain(address string) {
+func (cli *CLI) createBlockchain(address string) error {
+	if !transaction.ValidateAddress(address) {
+		return errors.ErrorInvalidAddress
+	}
+
 	bc, err := blockchain.CreateBlockchain(address)
 	defer bc.CloseDB()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Println("Done!")
+	return nil
+}
+
+// createWallet creates a new wallet
+func (cli *CLI) createWallet() error {
+	wallets, _ := transaction.NewWallets()
+
+	address, err := wallets.CreateWallet()
+	if err != nil {
+		return err
+	}
+
+	wallets.SaveToFile()
+
+	fmt.Printf("Your new address: %s\n", address)
+	return nil
 }
 
 // getBalance gets the balance of an address
-func (cli *CLI) getBalance(address string) {
+func (cli *CLI) getBalance(address string) error {
+	if !transaction.ValidateAddress(address) {
+		return errors.ErrorInvalidAddress
+	}
+
 	bc, err := blockchain.NewBlockchain()
 	defer bc.CloseDB()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	balance := 0
-	UTXOs, err := bc.FindUTXO(address)
+	publicKeyHash := transaction.Base58Decode([]byte(address))
+	publicKeyHash = publicKeyHash[1 : len(publicKeyHash)-4]
+	UTXOs, err := bc.FindUTXO(publicKeyHash)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	for _, out := range UTXOs {
@@ -60,15 +86,31 @@ func (cli *CLI) getBalance(address string) {
 	}
 
 	fmt.Printf("Balance of '%s': %d\n", address, balance)
+	return nil
+}
+
+// listAddresses lists all the addresses in the wallet file
+func (cli *CLI) listAddresses() error {
+	wallets, err := transaction.NewWallets()
+	if err != nil {
+		return err
+	}
+
+	addresses := wallets.GetAddresses()
+
+	for _, address := range addresses {
+		fmt.Println(address)
+	}
+
+	return nil
 }
 
 // printChain prints the blockchain
-func (cli *CLI) printChain() {
+func (cli *CLI) printChain() error {
 	bc, err := blockchain.NewBlockchain()
 	defer bc.CloseDB()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	bci := bc.Iterator()
@@ -76,45 +118,46 @@ func (cli *CLI) printChain() {
 	for {
 		block, err := bci.Next()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			return err
 		}
 
-		fmt.Printf("Prev. hash: %x\n", block.PrevBlockHash)
-		fmt.Printf("Hash: %x\n", block.Hash)
+		fmt.Printf("============ Block %x ============\n", block.Hash)
+		fmt.Printf("Prev. block: %x\n", block.PrevBlockHash)
 		pow := blockchain.NewProofOfWork(block)
-		fmt.Printf("PoW: %s\n", strconv.FormatBool(pow.Validate()))
-		fmt.Println()
+		fmt.Printf("PoW: %s\n\n", strconv.FormatBool(pow.Validate()))
+		for _, tx := range block.Transactions {
+			fmt.Println(tx)
+		}
+		fmt.Printf("\n\n")
 
 		if len(block.PrevBlockHash) == 0 {
 			break
 		}
-
 	}
+
+	return nil
 }
 
 // sendCoin sends coins from one address to another
-func (cli *CLI) sendCoin(from, to string, amount int) {
+func (cli *CLI) sendCoin(from, to string, amount int) error {
 	bc, err := blockchain.NewBlockchain()
 	defer bc.CloseDB()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	tx, err := blockchain.NewUTXOTransaction(from, to, amount, bc)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	err = bc.MineBlock([]*transaction.Transaction{tx})
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Println("Success!")
+	return nil
 }
 
 // validateArgs validates the command line arguments
@@ -134,6 +177,8 @@ func (cli *CLI) Run() {
 	createCmd := flag.NewFlagSet("create", flag.ExitOnError)
 	printCmd := flag.NewFlagSet("print", flag.ExitOnError)
 	sendCmd := flag.NewFlagSet("send", flag.ExitOnError)
+	newCmd := flag.NewFlagSet("new", flag.ExitOnError)
+	listCmd := flag.NewFlagSet("list", flag.ExitOnError)
 
 	// get command flags
 	getAddress := getCmd.String("address", "", "The address to get balance for")
@@ -148,6 +193,18 @@ func (cli *CLI) Run() {
 
 	// Parse the command line arguments
 	switch os.Args[1] {
+	case "new":
+		err := newCmd.Parse(os.Args[2:])
+		if err != nil {
+			cli.printUsage()
+			os.Exit(1)
+		}
+	case "list":
+		err := listCmd.Parse(os.Args[2:])
+		if err != nil {
+			cli.printUsage()
+			os.Exit(1)
+		}
 	case "get":
 		err := getCmd.Parse(os.Args[2:])
 		if err != nil {
@@ -178,6 +235,24 @@ func (cli *CLI) Run() {
 		os.Exit(1)
 	}
 
+	// Execute the command new if it was parsed
+	if newCmd.Parsed() {
+		err := cli.createWallet()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+
+	// Execute the command list if it was parsed
+	if listCmd.Parsed() {
+		err := cli.listAddresses()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+
 	// Execute the command add if it was parsed
 	if createCmd.Parsed() {
 		if *createAddress == "" {
@@ -185,7 +260,11 @@ func (cli *CLI) Run() {
 			fmt.Println("Invalid address: ", *createAddress)
 			os.Exit(1)
 		}
-		cli.createBlockchain(*createAddress)
+		err := cli.createBlockchain(*createAddress)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	// Execute the command get if it was parsed
@@ -195,7 +274,11 @@ func (cli *CLI) Run() {
 			fmt.Println("Invalid address: ", *getAddress)
 			os.Exit(1)
 		}
-		cli.getBalance(*getAddress)
+		err := cli.getBalance(*getAddress)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	// Execute the command send if it was parsed
@@ -205,12 +288,20 @@ func (cli *CLI) Run() {
 			fmt.Println("Invalid from/to/amount: ", *sendFrom, *sendTo, *sendAmount)
 			os.Exit(1)
 		}
-		cli.sendCoin(*sendFrom, *sendTo, *sendAmount)
+		err := cli.sendCoin(*sendFrom, *sendTo, *sendAmount)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	// Execute the command print if it was parsed
 	if printCmd.Parsed() {
-		cli.printChain()
+		err := cli.printChain()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 }
