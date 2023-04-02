@@ -10,8 +10,8 @@ import (
 )
 
 // showBlockchain prints the blockchain
-func showBlockchain() error {
-	bc, err := blockchain.NewBlockchain()
+func showBlockchain(nodeID string) error {
+	bc, err := blockchain.NewBlockchain(nodeID)
 	defer bc.CloseDB()
 	if err != nil {
 		return err
@@ -43,8 +43,8 @@ func showBlockchain() error {
 }
 
 // showAddresses lists all the addresses in the wallet file
-func showAddresses() error {
-	wallets, err := transaction.NewWallets()
+func showAddresses(nodeID string) error {
+	wallets, err := transaction.NewWallets(nodeID)
 	if err != nil {
 		return err
 	}

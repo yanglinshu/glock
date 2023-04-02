@@ -40,6 +40,12 @@ func (cli *CLI) validateArgs() {
 func (cli *CLI) Run() {
 	cli.validateArgs()
 
+	nodeID := os.Getenv("NODE_ID")
+	if nodeID == "" {
+		fmt.Println("NODE_ID env is not set!")
+		os.Exit(1)
+	}
+
 	// CLI commands
 	// Get command, has subcommand balance
 	getCmd := flag.NewFlagSet("get", flag.ExitOnError)
@@ -60,13 +66,17 @@ func (cli *CLI) Run() {
 	sendCmdFrom := sendCmd.String("from", "", "Source wallet address")
 	sendCmdTo := sendCmd.String("to", "", "Destination wallet address")
 	sendCmdAmount := sendCmd.Int("amount", 0, "Amount to send")
+	sendCmdMine := sendCmd.Bool("mine", false, "Mine immediately on the same node")
 
 	// Update command, has subcommand UTXO
 	updateCmd := flag.NewFlagSet("update", flag.ExitOnError)
 	updateCmdUTXO := updateCmd.Bool("UTXO", false, "Update the UTXO set")
 
-	// Parse the command line arguments
+	// Start command, start a node with a miner address
+	startCmd := flag.NewFlagSet("start", flag.ExitOnError)
+	startCmdNode := startCmd.String("node", "", "Start a node with a miner address")
 
+	// Parse the command line arguments
 	switch os.Args[1] {
 	case "get":
 		err := getCmd.Parse(os.Args[2:])
@@ -98,6 +108,12 @@ func (cli *CLI) Run() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+	case "start":
+		err := startCmd.Parse(os.Args[2:])
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	default:
 		cli.printUsage()
 		os.Exit(1)
@@ -110,7 +126,7 @@ func (cli *CLI) Run() {
 			fmt.Println("Invalid address: ", *getCmdBalance)
 			os.Exit(1)
 		}
-		err := getBalance(*getCmdBalance)
+		err := getBalance(*getCmdBalance, nodeID)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -120,13 +136,13 @@ func (cli *CLI) Run() {
 	// Execute the command create if it was parsed
 	if createCmd.Parsed() {
 		if *createCmdBlockchain != "" {
-			err := createBlockchain(*createCmdBlockchain)
+			err := createBlockchain(*createCmdBlockchain, nodeID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 		} else if *createCmdWallet {
-			err := createWallet()
+			err := createWallet(nodeID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -140,13 +156,13 @@ func (cli *CLI) Run() {
 	// Execute the command show if it was parsed
 	if showCmd.Parsed() {
 		if *showCmdBlockchain {
-			err := showBlockchain()
+			err := showBlockchain(nodeID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 		} else if *showCmdAddresses {
-			err := showAddresses()
+			err := showAddresses(nodeID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -164,7 +180,7 @@ func (cli *CLI) Run() {
 			fmt.Println("Invalid address or amount")
 			os.Exit(1)
 		}
-		err := sendTransaction(*sendCmdFrom, *sendCmdTo, *sendCmdAmount)
+		err := sendTransaction(*sendCmdFrom, *sendCmdTo, *sendCmdAmount, nodeID, *sendCmdMine)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -174,7 +190,7 @@ func (cli *CLI) Run() {
 	// Execute the command update if it was parsed
 	if updateCmd.Parsed() {
 		if *updateCmdUTXO {
-			err := updateUTXO()
+			err := updateUTXO(nodeID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -185,4 +201,12 @@ func (cli *CLI) Run() {
 		}
 	}
 
+	// Execute the command start if it was parsed
+	if startCmd.Parsed() {
+		err := startNode(*startCmdNode, nodeID)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
 }

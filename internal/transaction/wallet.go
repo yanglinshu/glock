@@ -7,13 +7,20 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/gob"
+	"fmt"
 	"os"
 
+	"github.com/yanglinshu/glock/internal/util"
 	"golang.org/x/crypto/ripemd160"
 )
 
+// version is the current version of the wallet
 const version = byte(0x00)
-const walletFile = "wallet.dat"
+
+// walletFileFormat is the format of the wallet file
+const walletFileFormat = "wallet_%s.dat"
+
+// addressChecksumLen is the length of the checksum in the address
 const addressChecksumLen = 4
 
 // Wallet stores a private and public key
@@ -49,7 +56,7 @@ func newKeyPair() (ecdsa.PrivateKey, []byte, error) {
 
 // ValidateAddress check if address if valid
 func ValidateAddress(address string) bool {
-	pubKeyHash := Base58Decode([]byte(address))
+	pubKeyHash := util.Base58Decode([]byte(address))
 
 	if len(pubKeyHash)-addressChecksumLen < 0 {
 		return false
@@ -80,7 +87,7 @@ func (w Wallet) GetAddress() ([]byte, error) {
 	checksum := checksum(versionedHash)
 
 	fullHash := append(versionedHash, checksum...)
-	addr := Base58Encode(fullHash)
+	addr := util.Base58Encode(fullHash)
 
 	return addr, nil
 }
@@ -114,11 +121,11 @@ type Wallets struct {
 }
 
 // NewWallets creates a new wallet
-func NewWallets() (*Wallets, error) {
+func NewWallets(nodeID string) (*Wallets, error) {
 	wallets := Wallets{}
 	wallets.Wallets = make(map[string]*Wallet)
 
-	err := wallets.LoadFromFile()
+	err := wallets.LoadFromFile(nodeID)
 
 	return &wallets, err
 }
@@ -156,7 +163,8 @@ func (ws Wallets) GetWallet(address string) Wallet {
 }
 
 // LoadFromFile loads wallets from file
-func (ws *Wallets) LoadFromFile() error {
+func (ws *Wallets) LoadFromFile(nodeID string) error {
+	walletFile := fmt.Sprintf(walletFileFormat, nodeID)
 	if _, err := os.Stat(walletFile); os.IsNotExist(err) {
 		return err
 	}
@@ -180,7 +188,7 @@ func (ws *Wallets) LoadFromFile() error {
 }
 
 // SaveToFile saves wallets to file
-func (ws Wallets) SaveToFile() error {
+func (ws Wallets) SaveToFile(nodeID string) error {
 	var content bytes.Buffer
 
 	gob.Register(elliptic.P256())
@@ -190,6 +198,7 @@ func (ws Wallets) SaveToFile() error {
 		return err
 	}
 
+	walletFile := fmt.Sprintf(walletFileFormat, nodeID)
 	err = os.WriteFile(walletFile, content.Bytes(), 0644)
 	if err != nil {
 		return err

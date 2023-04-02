@@ -3,6 +3,8 @@ package transaction
 import (
 	"bytes"
 	"encoding/gob"
+
+	"github.com/yanglinshu/glock/internal/util"
 )
 
 // TXOutput represents a transaction output. It contains the value of the output and the public key
@@ -24,7 +26,7 @@ func NewTXOutput(value int, address string) *TXOutput {
 
 // Lock signs the output.
 func (out *TXOutput) Lock(address []byte) {
-	pubKeyHash := Base58Decode(address)
+	pubKeyHash := util.Base58Decode(address)
 
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
 	out.PublicKeyHash = pubKeyHash
@@ -42,15 +44,12 @@ type TXOutputs struct {
 
 // Serialize serializes the transaction outputs.
 func (outs TXOutputs) Serialize() ([]byte, error) {
-	var buff bytes.Buffer
-
-	enc := gob.NewEncoder(&buff)
-	err := enc.Encode(outs)
+	buff, err := util.GobEncode(outs)
 	if err != nil {
 		return nil, err
 	}
 
-	return buff.Bytes(), nil
+	return buff, nil
 }
 
 // DeserializeOutputs deserializes the transaction outputs.

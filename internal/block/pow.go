@@ -3,9 +3,10 @@ package block
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
 	"math"
 	"math/big"
+
+	"github.com/yanglinshu/glock/internal/util"
 )
 
 // targetBits is the number of leading zero bits required in the hash of a block.
@@ -27,11 +28,6 @@ func NewProofOfWork(b *Block) *ProofOfWork {
 	return p
 }
 
-// IntToHex converts an integer to a hexadecimal byte array.
-func IntToHex(n int64) []byte {
-	return []byte(fmt.Sprintf("%x", n))
-}
-
 // prepareData returns the data to be hashed. The data is the concatenation of the fields of the
 // block and the nonce.
 func (p *ProofOfWork) prepareData(nonce int) []byte {
@@ -39,9 +35,9 @@ func (p *ProofOfWork) prepareData(nonce int) []byte {
 		[][]byte{
 			p.block.PrevBlockHash,
 			p.block.HashTransactions(),
-			IntToHex(p.block.Timestamp),
-			IntToHex(int64(targetBits)),
-			IntToHex(int64(nonce)),
+			util.IntToHex(p.block.Timestamp),
+			util.IntToHex(int64(targetBits)),
+			util.IntToHex(int64(nonce)),
 		},
 		[]byte{},
 	)

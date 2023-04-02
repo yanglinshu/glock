@@ -15,8 +15,8 @@ import (
 	"github.com/yanglinshu/glock/internal/transaction"
 )
 
-const dbFile = "blockchain.db" // Name of the database file
-const blocksBucket = "blocks"  // Name of the bucket in the database
+const dbFileFormat = "blockchain_%s.db" // Name of the database file
+const blocksBucket = "blocks"           // Name of the bucket in the database
 // genesisCoinbaseData is the data in the coinbase transaction of the genesis block.
 // See https://blockchain.info/tx/4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b?show_adv=true
 const genesisCoinbaseData = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"
@@ -29,7 +29,7 @@ type Blockchain struct {
 }
 
 // dbExists checks if the database file exists.
-func dbExists() bool {
+func dbExists(dbFile string) bool {
 	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
 		return false
 	}
@@ -39,8 +39,9 @@ func dbExists() bool {
 
 // NewBlockchain creates a new blockchain from boltDB. If the blockchain does not exist, it creates
 // a genesis block and adds it to the database.
-func NewBlockchain() (*Blockchain, error) {
-	if !dbExists() {
+func NewBlockchain(nodeID string) (*Blockchain, error) {
+	dbFile := fmt.Sprintf(dbFileFormat, nodeID)
+	if !dbExists(dbFile) {
 		return nil, errors.ErrDBDoesNotExist
 	}
 
@@ -67,8 +68,9 @@ func NewBlockchain() (*Blockchain, error) {
 
 // createBlockchain creates a new blockchain database. It also creates a genesis block and adds it
 // to the database.
-func CreateBlockchain(address string) (*Blockchain, error) {
-	if dbExists() {
+func CreateBlockchain(address, nodeID string) (*Blockchain, error) {
+	dbFile := fmt.Sprintf(dbFileFormat, nodeID)
+	if dbExists(dbFile) {
 		return nil, errors.ErrDBExists
 	}
 
@@ -123,6 +125,76 @@ func CreateBlockchain(address string) (*Blockchain, error) {
 	return &bc, nil
 }
 
+// AddBlock adds a block to the blockchain.
+func (bc *Blockchain) AddBlock(bl *block.Block) error {
+	err := bc.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+		blockInDB := b.Get(bl.Hash)
+
+		if blockInDB != nil {
+			return errors.ErrBlockExists
+		}
+
+		blockData, err := bl.Serialize()
+		if err != nil {
+			return err
+		}
+
+		err = b.Put(bl.Hash, blockData)
+		if err != nil {
+			return err
+		}
+
+		lastHash := b.Get([]byte("l"))
+		lastBlockData := b.Get(lastHash)
+		lastBlock, err := block.DeserializeBlock(lastBlockData)
+		if err != nil {
+			return err
+		}
+
+		if bl.Height > lastBlock.Height {
+			err = b.Put([]byte("l"), bl.Hash)
+			if err != nil {
+				return err
+			}
+
+			bc.tip = bl.Hash
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// FindTransaction finds a transaction by its ID.
+func (bc *Blockchain) FindTransaction(ID []byte) (transaction.Transaction, error) {
+	bci := bc.Iterator()
+
+	// Iterate over the blockchain
+	for {
+		block, err := bci.Next()
+		if err != nil {
+			return transaction.Transaction{}, err
+		}
+
+		for _, tx := range block.Transactions {
+			if bytes.Equal(tx.ID, ID) {
+				return *tx, nil
+			}
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return transaction.Transaction{}, errors.ErrTransactionNotFound
+}
+
 // FindUTXO finds and returns all unspent transaction outputs.
 func (bc *Blockchain) FindUTXO() (map[string]transaction.TXOutputs, error) {
 	UTXOs := make(map[string]transaction.TXOutputs)
@@ -173,10 +245,81 @@ func (bc *Blockchain) FindUTXO() (map[string]transaction.TXOutputs, error) {
 	return UTXOs, nil
 }
 
+// GetBestHeight returns the height of the latest block in the blockchain.
+func (bc *Blockchain) GetBestHeight() (int, error) {
+	var lastBlock *block.Block
+
+	err := bc.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+		lastHash := b.Get([]byte("l"))
+		blockData := b.Get(lastHash)
+
+		var err error = nil
+		lastBlock, err = block.DeserializeBlock(blockData)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return lastBlock.Height, nil
+}
+
+// GetBlock returns a block by its hash.
+func (bc *Blockchain) GetBlock(blockHash []byte) (*block.Block, error) {
+	var bl *block.Block
+
+	err := bc.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+		blockData := b.Get(blockHash)
+
+		var err error = nil
+		bl, err = block.DeserializeBlock(blockData)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return bl, nil
+}
+
+// GetBlockHashes returns a slice of hashes of all the blocks in the blockchain.
+func (bc *Blockchain) GetBlockHashes() ([][]byte, error) {
+	var blocks [][]byte
+
+	bci := bc.Iterator()
+
+	// Iterate over the blockchain
+	for {
+		block, err := bci.Next()
+		if err != nil {
+			return nil, err
+		}
+
+		blocks = append(blocks, block.Hash)
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return blocks, nil
+}
+
 // MineBlock mines a new block with the provided transactions. It adds the block to the blockchain
 // and updates the database. Verify the transactions happens before the block is mined.
 func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) (*block.Block, error) {
 	var lastHash []byte
+	var lastHeight int
 
 	// Verify the transactions
 	for _, tx := range transactions {
@@ -192,13 +335,22 @@ func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) (*block
 		b := tx.Bucket([]byte(blocksBucket))
 		lastHash = b.Get([]byte("l"))
 
+		// Get the last block's height
+		blockData := b.Get(lastHash)
+		lastBlock, err := block.DeserializeBlock(blockData)
+		if err != nil {
+			return err
+		}
+
+		lastHeight = lastBlock.Height
+
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	newBlock := block.NewBlock(transactions, lastHash)
+	newBlock := block.NewBlock(transactions, lastHash, lastHeight+1)
 
 	// Write the new block to the database
 	err = bc.db.Update(func(tx *bolt.Tx) error {
@@ -228,30 +380,6 @@ func (bc *Blockchain) MineBlock(transactions []*transaction.Transaction) (*block
 	fmt.Printf("%x\n", newBlock.Hash)
 
 	return newBlock, nil
-}
-
-func (bc *Blockchain) FindTransaction(ID []byte) (transaction.Transaction, error) {
-	bci := bc.Iterator()
-
-	// Iterate over the blockchain
-	for {
-		block, err := bci.Next()
-		if err != nil {
-			return transaction.Transaction{}, err
-		}
-
-		for _, tx := range block.Transactions {
-			if bytes.Equal(tx.ID, ID) {
-				return *tx, nil
-			}
-		}
-
-		if len(block.PrevBlockHash) == 0 {
-			break
-		}
-	}
-
-	return transaction.Transaction{}, errors.ErrTransactionNotFound
 }
 
 // SignTransaction signs inputs of a Transaction.
@@ -294,16 +422,10 @@ func (bc *Blockchain) VerifyTransaction(tx *transaction.Transaction) (bool, erro
 }
 
 // NewUTXOTransaction creates a new transaction. Signing is done here.
-func NewUTXOTransaction(from, to string, amount int, UTXOSet *UTXOSet) (*transaction.Transaction, error) {
+func NewUTXOTransaction(wallet *transaction.Wallet, to string, amount int, UTXOSet *UTXOSet) (*transaction.Transaction, error) {
 	var inputs []transaction.TXInput
 	var outputs []transaction.TXOutput
 
-	wallets, err := transaction.NewWallets()
-	if err != nil {
-		return nil, err
-	}
-
-	wallet := wallets.GetWallet(from)
 	pubKeyHash, err := transaction.HashPubKey(wallet.PublicKey)
 	if err != nil {
 		return nil, err
@@ -332,13 +454,23 @@ func NewUTXOTransaction(from, to string, amount int, UTXOSet *UTXOSet) (*transac
 	}
 
 	// Build a list of outputs
+	fromAddr, err := wallet.GetAddress()
+	if err != nil {
+		return nil, err
+	}
+	from := string(fromAddr)
+
 	outputs = append(outputs, *transaction.NewTXOutput(amount, to))
 	if acc > amount {
 		outputs = append(outputs, *transaction.NewTXOutput(acc-amount, from)) // a change
 	}
 
 	tx := transaction.Transaction{ID: nil, Vin: inputs, Vout: outputs}
-	tx.ID = tx.Hash()
+	tx.ID, err = tx.Hash()
+	if err != nil {
+		return nil, err
+	}
+
 	UTXOSet.Blockchain.SignTransaction(&tx, wallet.PrivateKey)
 
 	return &tx, nil

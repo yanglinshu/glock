@@ -31,3 +31,12 @@ var ErrInvalidTransaction = NewError("invalid transaction")
 
 // ErrInvalidAddress is an error that is returned when an address is invalid
 var ErrInvalidAddress = NewError("invalid address")
+
+// ErrBlockExists is an error that is returned when a block already exists
+var ErrBlockExists = NewError("block already exists")
+
+// ErrUnknownCommand is an error that is returned when an unknown command is received
+var ErrUnknownCommand = NewError("unknown command")
+
+// ErrUnknownGetDataType is an error that is returned when an unknown getdata type is received
+var ErrUnknownGetDataType = NewError("unknown getdata type")

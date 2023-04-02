@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yanglinshu/glock/internal/transaction"
+	"github.com/yanglinshu/glock/internal/util"
 )
 
 // Block represents a block in the blockchain. It contains the header and the transactions.
@@ -15,11 +16,12 @@ type Block struct {
 	PrevBlockHash []byte                     // Hash of the previous block
 	Hash          []byte                     // Hash of the current block
 	Nonce         int                        // Nonce is the number of times the hash of the block is calculated
+	Height        int                        // Height of the block in the blockchain
 }
 
 // NewBlock creates and returns a pointer to a Block.
-func NewBlock(transactions []*transaction.Transaction, prevBlockHash []byte) *Block {
-	block := &Block{time.Now().Unix(), transactions, prevBlockHash, []byte{}, 0}
+func NewBlock(transactions []*transaction.Transaction, prevBlockHash []byte, height int) *Block {
+	block := &Block{time.Now().Unix(), transactions, prevBlockHash, []byte{}, 0, height}
 	pow := NewProofOfWork(block)
 	nonce, hash := pow.Run()
 
@@ -31,21 +33,17 @@ func NewBlock(transactions []*transaction.Transaction, prevBlockHash []byte) *Bl
 
 // NewGenesisBlock creates and returns a pointer to a genesis block.
 func NewGenesisBlock(coinbase *transaction.Transaction) *Block {
-	return NewBlock([]*transaction.Transaction{coinbase}, []byte{})
+	return NewBlock([]*transaction.Transaction{coinbase}, []byte{}, 0)
 }
 
 // Serialize serializes the block into a byte slice using the Gob encoding.
 func (b *Block) Serialize() ([]byte, error) {
-	var result bytes.Buffer
-	encoder := gob.NewEncoder(&result)
-
-	err := encoder.Encode(b)
-
+	result, err := util.GobEncode(b)
 	if err != nil {
 		return nil, err
 	}
 
-	return result.Bytes(), nil
+	return result, nil
 }
 
 // HashTransactions returns the hash of the transactions in the block.

@@ -7,12 +7,12 @@ import (
 )
 
 // updateUTXO rebuilds the UTXO set
-func updateUTXO() error {
-	bc, err := blockchain.NewBlockchain()
-	defer bc.CloseDB()
+func updateUTXO(nodeID string) error {
+	bc, err := blockchain.NewBlockchain(nodeID)
 	if err != nil {
 		return err
 	}
+	defer bc.CloseDB()
 
 	UTXOSet := blockchain.UTXOSet{Blockchain: bc}
 	UTXOSet.Reindex()
